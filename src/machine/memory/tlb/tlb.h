@@ -2,6 +2,7 @@
 #define TLB_H
 
 #include "common/logging.h"
+#include "csr/address.h"
 #include "memory/frontend_memory.h"
 #include "memory/virtual/sv32.h"
 #include "memory/virtual/virtual_address.h"
@@ -83,6 +84,9 @@ signals:
     void memory_reads_update(uint32_t val);
     void memory_writes_update(uint32_t val);
 
+public slots:
+    void on_privilege_changed(CSR::PrivilegeLevel new_priv);
+
 private:
     struct Entry {
         bool valid = false;
@@ -93,9 +97,12 @@ private:
     };
 
     FrontendMemory *mem;
+    const Address uncached_start;
+    const Address uncached_last;
     TLBType type;
     const TLBConfig tlb_config;
     uint32_t current_satp_raw = 0;
+    CSR::PrivilegeLevel current_priv_ = CSR::PrivilegeLevel::MACHINE;
     const bool vm_enabled;
 
     size_t num_sets_;
@@ -116,6 +123,7 @@ private:
     mutable uint32_t burst_writes = 0;
     mutable uint32_t change_counter = 0;
 
+    bool is_in_uncached_area(Address source) const;
     WriteResult translate_and_write(Address dst, const void *src, size_t sz, WriteOptions opts);
     ReadResult translate_and_read(void *dst, Address src, size_t sz, ReadOptions opts);
     inline size_t set_index(uint64_t vpn) const { return vpn & (num_sets_ - 1); }

@@ -2,6 +2,7 @@
 
 #include "common/logging.h"
 #include "execute/alu.h"
+#include "memory/tlb/tlb.h"
 #include "utils.h"
 
 #include <cinttypes>
@@ -158,6 +159,12 @@ bool Core::handle_exception(
             control_state->exception_initiate(
                 state.current_privilege(), CSR::PrivilegeLevel::MACHINE);
             state.set_current_privilege(CSR::PrivilegeLevel::MACHINE);
+            if (auto prog_tlb = dynamic_cast<TLB *>(mem_program)) {
+                prog_tlb->on_privilege_changed(CSR::PrivilegeLevel::MACHINE);
+            }
+            if (auto data_tlb = dynamic_cast<TLB *>(mem_data)) {
+                data_tlb->on_privilege_changed(CSR::PrivilegeLevel::MACHINE);
+            }
             regs->write_pc(control_state->exception_pc_address());
         }
     }
@@ -522,6 +529,12 @@ MemoryState Core::memory(const ExecuteInterstage &dt) {
             CSR::PrivilegeLevel restored
                 = control_state->exception_return(state.current_privilege());
             state.set_current_privilege(restored);
+            if (auto prog_tlb = dynamic_cast<TLB *>(mem_program)) {
+                prog_tlb->on_privilege_changed(restored);
+            }
+            if (auto data_tlb = dynamic_cast<TLB *>(mem_data)) {
+                data_tlb->on_privilege_changed(restored);
+            }
             if (this->xlen == Xlen::_32)
                 computed_next_inst_addr
                     = Address(control_state->read_internal(CSR::Id::MEPC).as_u32());

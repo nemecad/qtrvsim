@@ -3,21 +3,13 @@
 #include "csr/controlstate.h"
 #include "machine.h"
 #include "memory/virtual/page_table_walker.h"
-#include "memory/virtual/sv32.h"
 
 LOG_CATEGORY("machine.TLB");
 
 namespace machine {
 
-static bool is_mmio_region(uint64_t virt) {
-    if (virt >= 0xFFFFC000u && virt <= 0xFFFFC1FFu) return true;
-    if (virt >= 0xFFE00000u && virt <= 0xFFE4AFFFu) return true;
-    if (virt >= 0xFFFD0000u && virt <= 0xFFFDBFFFu) return true;
-    return false;
-}
-
-static Address bypass_mmio(Address vaddr) {
-    return vaddr; // VA == PA for devices
+inline bool is_mode_enabled_in_satp(uint32_t satp_raw) {
+    return (satp_raw & (1u << 31)) != 0;
 }
 
 TLB::TLB(
@@ -31,6 +23,8 @@ TLB::TLB(
     bool memory_access_enable_b)
     : FrontendMemory(memory->simulated_machine_endian)
     , mem(memory)
+    , uncached_start(0xf0000000_addr)
+    , uncached_last(0xfffffffe_addr)
     , type(type_)
     , tlb_config(config)
     , vm_enabled(vm_enabled)
@@ -71,6 +65,18 @@ void TLB::on_csr_write(size_t internal_id, RegisterValue val) {
     }
     LOG("TLB: SATP changed → flushed all; new SATP=0x%08x", current_satp_raw);
     update_all_statistics();
+}
+
+void TLB::on_privilege_changed(CSR::PrivilegeLevel new_priv) {
+    if (new_priv == current_priv_) return;
+
+    current_priv_ = new_priv;
+    flush();
+    LOG("TLB: privilege changed -> %d; flushed TLB", static_cast<int>(new_priv));
+}
+
+bool TLB::is_in_uncached_area(Address source) const {
+    return (source >= uncached_start && source <= uncached_last);
 }
 
 void TLB::flush_single(VirtualAddress va, uint16_t asid) {
@@ -119,9 +125,11 @@ void TLB::sync() {
 
 Address TLB::translate_virtual_to_physical(Address vaddr) {
     uint64_t virt = vaddr.get_raw();
-    if (is_mmio_region(virt)) { return bypass_mmio(vaddr); }
 
-    if (!vm_enabled) { return vaddr; }
+    if (!vm_enabled || current_priv_ == CSR::PrivilegeLevel::MACHINE
+        || !is_mode_enabled_in_satp(current_satp_raw) || is_in_uncached_area(vaddr)) {
+        return vaddr;
+    }
 
     constexpr unsigned PAGE_SHIFT = 12;
     constexpr uint64_t PAGE_MASK = (1ULL << PAGE_SHIFT) - 1;
