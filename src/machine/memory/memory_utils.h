@@ -10,6 +10,13 @@
 #include <functional>
 
 namespace machine {
+    struct AccessMode;
+
+    enum class AccessOp : uint8_t {
+        FETCH = 0,
+        READ  = 1,
+        WRITE = 2,
+    };
 
 /**
  * Determines what effects should memory access cause.
