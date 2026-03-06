@@ -2,7 +2,6 @@
 
 #include "common/logging.h"
 #include "machine.h"
-#include "memory/backend/backend_memory.h"
 
 #include <inttypes.h>
 
@@ -27,24 +26,21 @@ std::function<std::unique_ptr<GenericPte>(uint64_t)> PageTableWalker::sv39_pte_f
     };
 }
 
-template <typename T, int max_level_idx>
-Address PageTableWalker::walk(const VirtualAddress &va, uint64_t raw_satp) {
-    if (!(raw_satp & T::SATP_MODE_MASK)) {
-        return Address { va.get_raw() };
+template <typename PagingMode, int max_level_idx>
+WalkResult PageTableWalker::walk(const VirtualAddress &va, uint64_t raw_satp, uint64_t raw_sstatus, const AccessMode &access_mode) {
+    if (!(raw_satp & PagingMode::SATP_MODE_MASK)) {
+        return WalkResult{ Address{va.get_raw()}, nullptr };
     }
 
-    uint64_t ppn = raw_satp & T::SATP_PPN_MASK;
+    uint64_t ppn = raw_satp & PagingMode::SATP_PPN_MASK;
     uint64_t va_raw = va.get_raw();
+    WalkResult res;
 
     for (int lvl = max_level_idx; lvl >= 0; --lvl) {
-        // Calculate the index for the current level
-        // Sv32: Level 1 starts at bit 22, Level 0 at 12 (Shift = 12 + lvl * 10)
-        // Sv39: Level 2 starts at bit 30, Level 1 at 21, Level 0 at 12 (Shift = 12 + lvl * 9)
-        uint32_t vpn_idx = (va_raw >> (T::PAGE_SHIFT + (lvl * T::VPN_BITS))) & T::VPN_MASK;
-
-        Address pte_addr { (ppn << T::PAGE_SHIFT) + (vpn_idx * sizeof(typename T::RawType)) };
-        typename T::RawType raw_pte = 0;
-        memory->read(&raw_pte, pte_addr, sizeof(raw_pte), { .type = ae::INTERNAL });
+        uint32_t vpn_idx = (va_raw >> (PagingMode::PAGE_SHIFT + (lvl * PagingMode::VPN_BITS))) & PagingMode::VPN_MASK;
+        Address pte_addr { (ppn << PagingMode::PAGE_SHIFT) + (vpn_idx * sizeof(typename PagingMode::RawType)) };
+        typename PagingMode::RawType raw_pte = 0;
+        memory->read(&raw_pte, pte_addr, sizeof(raw_pte), { .type = AccessEffects::REGULAR });
         DEBUG("PTW: L%u PTE@0x%08" PRIx64 " = 0x%08" PRIx64, lvl, pte_addr.get_raw(), (uint64_t)raw_pte);
         std::unique_ptr<GenericPte> pte = pte_factory_(uint64_t(raw_pte));
 
@@ -54,26 +50,37 @@ Address PageTableWalker::walk(const VirtualAddress &va, uint64_t raw_satp) {
                 QString::number(pte_addr.get_raw(), 16));
         }
         if (pte->is_leaf()) {
-            uint64_t mask = (1ull << (lvl * T::VPN_BITS)) - 1;
+            uint64_t mask = (1ull << (lvl * PagingMode::VPN_BITS)) - 1;
             if (lvl > 0 && (pte->ppn() & mask) != 0) {
                 throw SIMULATOR_EXCEPTION(PageFault, "PTW: misaligned superpage", "");
             }
+
+            if (!check_permissions(*pte, raw_sstatus, access_mode.priv(), access_mode.opkind())) {
+                throw SIMULATOR_EXCEPTION(PageFault, "PTW: access fault (permission check failed)", "");
+            }
+
             Address pa = pte->make_phys(va_raw, lvl);
             DEBUG("PTW: L%u leaf → PA=0x%08" PRIx64, lvl, pa.get_raw());
-            return pa;
+            res.phys = pa;
+            res.pte_addr = pte_addr;
+            res.leaf_pte = std::move(pte);
+            return res;
         }
 
         if (pte->r() || pte->w() || pte->x()) {
             throw SIMULATOR_EXCEPTION(
                 PageFault, "PTW: invalid non-leaf", QString::number(raw_pte, 16));
         }
+
         ppn = pte->ppn();
     }
 
     throw SIMULATOR_EXCEPTION(PageFault, "PTW: no leaf found", "");
 }
 
-template Address PageTableWalker::walk<Sv32Pte, 1>(const VirtualAddress &va, uint64_t raw_satp);
-template Address PageTableWalker::walk<Sv39Pte, 2>(const VirtualAddress &va, uint64_t raw_satp);
+template WalkResult PageTableWalker::walk<Sv32Pte, 1>(const VirtualAddress &va, uint64_t raw_satp, uint64_t raw_sstatus, const AccessMode &access_mode);
+template WalkResult PageTableWalker::walk<Sv39Pte, 2>(const VirtualAddress &va, uint64_t raw_satp, uint64_t raw_sstatus, const AccessMode &access_mode);
+
+template bool check_permissions<GenericPte>(const GenericPte &pte, uint64_t raw_sstatus, CSR::PrivilegeLevel priv, AccessOp op);
 
 } // namespace machine
