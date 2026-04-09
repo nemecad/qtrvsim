@@ -1,4 +1,6 @@
 #include "hexlineedit.h"
+#include <QtGlobal>
+#include <QTextStream>
 
 HexLineEdit::HexLineEdit(QWidget *parent, int digits, int base, const QString &prefix)
     : Super(parent) {
@@ -40,7 +42,7 @@ HexLineEdit::HexLineEdit(QWidget *parent, int digits, int base, const QString &p
     set_value(0);
 }
 
-void HexLineEdit::set_value(uint32_t value) {
+void HexLineEdit::set_value(uint64_t value) {
     QString s, t = "";
     last_set = value;
     s = QString::number(value, base);
@@ -50,8 +52,9 @@ void HexLineEdit::set_value(uint32_t value) {
 
 void HexLineEdit::on_edit_finished() {
     bool ok;
-    uint32_t val;
-    val = text().toULong(&ok, 16);
+    uint64_t val;
+    
+    val = text().toULongLong(&ok, base);    
     if (!ok) {
         set_value(last_set);
         return;

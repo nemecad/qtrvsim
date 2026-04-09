@@ -45,7 +45,7 @@ QVariant MemoryModel::headerData(int section, Qt::Orientation orientation, int r
             if (section == 0) {
                 return tr("Address");
             } else {
-                uint32_t addr = (section - 1) * cellSizeBytes();
+                uint64_t addr = (section - 1) * cellSizeBytes();
                 QString ret = "+" + QString::number(addr, 10);
                 return ret;
             }
@@ -85,16 +85,20 @@ QVariant MemoryModel::data(const QModelIndex &index, int role) const {
         machine::AccessMode mode = machine::Core::make_access_mode(machine->core()->get_state(), machine::AccessOp::READ);
         machine::AddressWithMode awm(address, mode);
         if (address < index0_offset) { return QString(""); }
-        switch (cell_size) {
-        case CELLSIZE_BYTE: data = mem->read_u8(awm, ae::INTERNAL); break;
-        case CELLSIZE_HWORD: data = mem->read_u16(awm, ae::INTERNAL); break;
-        default:
-        case CELLSIZE_WORD: data = mem->read_u32(awm, ae::INTERNAL); break;
-        }
+        try {
+            switch (cell_size) {
+            case CELLSIZE_BYTE: data = mem->read_u8(awm, ae::INTERNAL); break;
+            case CELLSIZE_HWORD: data = mem->read_u16(awm, ae::INTERNAL); break;
+            default:
+            case CELLSIZE_WORD: data = mem->read_u32(awm, ae::INTERNAL); break;
+            }
 
-        t = QString::number(data, 16);
-        s.fill('0', cellSizeBytes() * 2 - t.count());
-        t = s + t;
+            t = QString::number(data, 16);
+            s.fill('0', cellSizeBytes() * 2 - t.count());
+            t = s + t;
+        } catch (machine::SimulatorExceptionPageFault &e) {
+            t = "--";
+        }
 #if 0
         machine::LocationStatus loc_stat = machine::LOCSTAT_NONE;
         if (machine->cache_data() != nullptr) {
