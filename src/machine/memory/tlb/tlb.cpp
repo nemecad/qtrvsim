@@ -301,7 +301,7 @@ TLB::TranslationResult TLB::translate_virtual_to_physical(AddressWithMode vaddr)
         "TLB[%s]: cached VA=0x%llx -> PA=0x%llx (ASID=%u) on miss", tag, (unsigned long long)virt,
         (unsigned long long)phys_base, asid);
     update_all_statistics();
-    return { Address { phys_base + off }, static_cast<size_t>(PAGE_BYTES - off) };
+    return { Address { phys_base + off }, static_cast<size_t>(PAGE_BYTES - off), &ent };
 }
 
 WriteResult TLB::write(AddressWithMode dst, const void *src, size_t sz, WriteOptions opts) {
